@@ -1,0 +1,37 @@
+{
+  "max_messages": 200,
+  "max_scrolls": 20,
+  "overlap_messages": 50,
+  "max_media_mb": 128,
+  "max_media_per_run": 10,
+  "sources": [
+    {
+      "key": "saved",
+      "kind": "saved",
+      "enabled": true,
+      "own_test_material": true,
+      "test_text_prefix": "CRP-STAGE0",
+      "rights": "project_owner_own_test_material",
+      "ai_processing": true
+    },
+    {
+      "key": "example_public_channel",
+      "kind": "channel",
+      "enabled": false,
+      "expected_title": "YOUR_AUTHORIZED_CHANNEL_TITLE",
+      "username": "YOUR_PUBLIC_CHANNEL_USERNAME",
+      "source_url": "https://t.me/YOUR_PUBLIC_CHANNEL_USERNAME",
+      "rights": "REPLACE_WITH_CONFIRMED_PERMISSION",
+      "ai_processing": false
+    },
+    {
+      "key": "example_private_channel",
+      "kind": "channel",
+      "enabled": false,
+      "expected_title": "YOUR_AUTHORIZED_PRIVATE_CHANNEL_TITLE",
+      "search_query": "YOUR_AUTHORIZED_PRIVATE_CHANNEL_TITLE",
+      "rights": "REPLACE_WITH_CONFIRMED_PERMISSION",
+      "ai_processing": false
+    }
+  ]
+}

@@ -1,0 +1,4 @@
+# Optional Windows Stage 0 dependency; existing MVP requirements remain unchanged.
+playwright==1.61.0
+# Existing one-shot local Qwen probe, same pin as requirements-mvp.txt.
+requests==2.32.5
