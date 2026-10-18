@@ -42,18 +42,21 @@ def candles_from_response(data: dict, *, as_of: datetime,
     return [c for c in result if c.start + interval <= as_of]
 
 
-def render_chart(candles: list[Candle], research: dict, daily: dict,
-                 *, symbol: str, snapshot: datetime, target: Path) -> None:
+def render_chart(candles: list[Candle], research: dict, daily: dict | None,
+                 *, symbol: str, snapshot: datetime, target: Path,
+                 category: str = 'linear', interval_label: str = '4H', candle_minutes: int = 240,
+                 source_levels: list | None = None, publication: datetime | None = None,
+                 cutoff_kind: str = 'publication') -> None:
     fig, ax = plt.subplots(figsize=(14, 7), dpi=145)
     fig.patch.set_facecolor("#f5f7fa")
     ax.set_facecolor("#ffffff")
-    width = 0.11  # four hours in Matplotlib date units (days)
+    width = candle_minutes / 1440 * .66
     for c in candles[-80:]:
         x = mdates.date2num(c.start)
         color = "#178b7b" if c.close >= c.open else "#cb5d65"
         ax.vlines(x, c.low, c.high, color=color, linewidth=1.1, zorder=3)
         ax.add_patch(Rectangle((x-width/2, min(c.open, c.close)), width,
-                               max(abs(c.close-c.open), .05), color=color, zorder=4))
+                               max(abs(c.close-c.open), c.close*.000001), color=color, zorder=4))
     zone = research.get("zone")
     if zone:
         zlow, zhigh = zone
@@ -67,23 +70,31 @@ def render_chart(candles: list[Candle], research: dict, daily: dict,
             ax.axhline((zlow+zhigh)/2, color="#8054b0", linewidth=1.2, linestyle="--")
         for stamp in research.get("pivot_starts", []):
             pivot = datetime.fromisoformat(stamp)
-            if pivot >= candles[-80].start:
+            if pivot >= candles[max(0,len(candles)-80)].start:
                 ax.axvline(pivot, color="#8054b0", alpha=.28, linewidth=.8)
+    for level in source_levels or []:
+        ax.axhline(level['level'],color='#8054b0',linestyle='--',linewidth=1.6,
+                   label=f"Source text level {level['level']:,.2f} (OHLC checked)")
     ax.axhline(candles[-1].close, color="#263c57", linewidth=1, alpha=.8,
-               label=f"Last closed 4H {candles[-1].close:,.1f}")
-    ax.set_title(f"{symbol} · Bybit linear · 4H liquidity watch · {RULE_VERSION}\n"
-                 f"Snapshot {snapshot:%Y-%m-%d %H:%M} UTC | 1D 20-bar range "
-                 f"{daily['range_low']:,.1f}–{daily['range_high']:,.1f}",
+               label=f"Last closed {interval_label} {candles[-1].close:,.2f}")
+    context = (f" | 1D 20-bar range {daily['range_low']:,.1f}–{daily['range_high']:,.1f}" if daily else '')
+    original = (f" | Original {publication:%Y-%m-%d %H:%M} UTC" if publication else '')
+    ax.set_title(f"{symbol} · Bybit {category} · {interval_label} liquidity watch · {RULE_VERSION}\n"
+                 f"Snapshot {snapshot:%Y-%m-%d %H:%M} UTC" + context + original,
                  fontsize=13, loc="left", color="#263c57")
     ax.xaxis.set_major_locator(mdates.AutoDateLocator(minticks=5, maxticks=10))
     ax.xaxis.set_major_formatter(mdates.ConciseDateFormatter(ax.xaxis.get_major_locator()))
-    ax.set_xlabel("UTC time · closed 4H candles")
+    ax.set_xlabel(f"UTC time · closed {interval_label} candles")
     ax.set_ylabel("USDT")
     ax.grid(alpha=.16)
     ax.legend(loc="best", fontsize=9)
-    fig.text(.09, .01,
-             "RESEARCH TEST • inferred stops, not observed orders • no entry / SL / TP "
-             "• review on new 4H structure or after 3 days",
+    footer = "RESEARCH TEST • inferred stops, not observed orders • no entry / SL / TP "
+    if publication:
+        footer += ("• historical cutoff / observation only" if cutoff_kind=='publication' else
+                   "• current analysis cutoff / observation only")
+    else:
+        footer += "• review on new 4H structure or after 3 days"
+    fig.text(.09, .01, footer,
              color="#a03545", fontsize=9, weight="bold")
     fig.tight_layout(rect=(0, .025, 1, 1))
     target.parent.mkdir(parents=True, exist_ok=True)

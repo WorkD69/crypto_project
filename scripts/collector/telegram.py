@@ -124,11 +124,13 @@ def open_source(page, source):
     return identity
 
 
-def capture_visible(page, prefix=None):
+def capture_visible(page, prefix=None, message_id=None):
     # Telegram lazily fills the exact timestamp tooltip on pointer entry.
     rows = page.evaluate(EXTRACT_JS)
+    if message_id is not None:
+        rows = [row for row in rows if row['message_id'] == message_id]
     for row in rows:
-        if prefix is None or (prefix and not row["text"].startswith(prefix)):
+        if message_id is None and (prefix is None or (prefix and not row["text"].startswith(prefix))):
             continue
         mid = row["message_id"]
         if not mid or not re.fullmatch(r"[1-9][0-9]*", mid):
@@ -197,7 +199,7 @@ def scan_source(page, store, root, config, source, identity, recheck_media=False
     reached_start = False
     unchanged = 0
     for _ in range(config["max_scrolls"]):
-        rows = capture_visible(page)
+        rows = capture_visible(page, message_id=target_message_id)
         before = len(seen)
         for row in rows:
             mid = row["message_id"]
@@ -205,10 +207,12 @@ def scan_source(page, store, root, config, source, identity, recheck_media=False
                 seen[mid] = row
         if len(seen) >= config["max_messages"]:
             break
+        if target_message_id and target_message_id in seen:
+            break
         if anchor in seen and sum(int(mid) <= int(anchor) for mid in seen) >= config["overlap_messages"]:
             break
         unchanged = unchanged + 1 if len(seen) == before else 0
-        if unchanged >= 3:
+        if unchanged >= 3 and not target_message_id:
             # Stable DOM is not proof of the start: network/history may be unavailable.
             break
         scroll = page.locator('#MiddleColumn .MessageList').last
@@ -222,11 +226,13 @@ def scan_source(page, store, root, config, source, identity, recheck_media=False
     scroll=page.locator('#MiddleColumn .MessageList').last
     scroll.evaluate("e => e.scrollTop = e.scrollHeight")
     final_freshness=wait_for_messages_ready(page,minimum_seconds=2)
-    for row in capture_visible(page, source.get("test_text_prefix", "")):
+    for row in capture_visible(page, source.get("test_text_prefix", ""), message_id=target_message_id):
         if re.fullmatch(r'[1-9][0-9]*',row['message_id'] or ''):
             seen[row["message_id"]] = row
     ids = sorted(seen, key=int)[-config["max_messages"]:]
-    coverage = coverage_state(ids, anchor, reached_start)
+    coverage = 'TARGETED' if target_message_id else coverage_state(ids, anchor, reached_start)
+    if target_message_id and target_message_id not in ids:
+        raise RuntimeError('TARGET_MESSAGE_NOT_VISIBLE')
     counts = {"created": 0, "edited": 0, "duplicate": 0, "quarantined": 0}
     media_stats = {"downloaded": 0, "reused":0, "unavailable_or_deferred": 0}
     review_items = 0
@@ -268,7 +274,8 @@ def scan_source(page, store, root, config, source, identity, recheck_media=False
               "oldest_seen_id": ids[0] if ids else None,
               "limit": config["max_messages"], "edit_window": config["overlap_messages"],
               'freshness':{'initial':freshness,'final':final_freshness}}
-    store.checkpoint(source["key"], ids[-1] if ids else None, coverage, len(ids), detail)
+    if not target_message_id:
+        store.checkpoint(source["key"], ids[-1] if ids else None, coverage, len(ids), detail)
     return {"source": source["key"], "coverage": coverage, "scanned": len(ids),
             "review_items": review_items, "media": media_stats,
             'freshness':detail['freshness'], 'observation':'CHANGES_OBSERVED' if counts['created'] or counts['edited'] else 'NO_CHANGES_OBSERVED',
@@ -305,5 +312,5 @@ def run_sources(page, store, root, config, args):
             results.append({"source": source["key"], "state": code,
                             "step": getattr(page, "collector_step", "SCAN")})
     store.export(Path(root) / "outbox")
-    good = all(r.get("coverage") in ("COMPLETE", "BOUNDED_INITIAL") or r.get("state") == "VERIFIED" for r in results)
+    good = all(r.get("coverage") in ("COMPLETE", "BOUNDED_INITIAL", "TARGETED") or r.get("state") == "VERIFIED" for r in results)
     return {"state": "COMPLETE" if good else "PARTIAL", "sources": results}

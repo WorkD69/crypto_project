@@ -40,6 +40,53 @@ class RealBrowserContractTests(unittest.TestCase):
         self.assertEqual(row["media"][0]["dom_album_main_message_id"], "42")
         self.assertEqual(row["media"][1]["dom_album_last_message_id"], "43")
 
+    def test_targeted_capture_hovers_only_requested_message_for_exact_time(self):
+        from scripts.collector.telegram import capture_visible
+        self.page.set_content('''<div id="MiddleColumn">
+          <div class="Message" data-message-id="41"><span class="message-time">11:00</span></div>
+          <div class="Message" data-message-id="42"><span class="message-time"
+          onmouseenter="this.title='Oct 15, 2026, 18:09:37'">18:09</span></div></div>''')
+        rows = capture_visible(self.page, message_id='42')
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['message_id'], '42')
+        self.assertEqual(rows[0]['original_time_raw'], 'Oct 15, 2026, 18:09:37')
+
+    def test_targeted_scan_saves_one_event_without_advancing_source_cursor(self):
+        from scripts.collector.telegram import scan_source
+        from scripts.collector.store import CollectorStore
+        self.page.set_content('''<div id="MiddleColumn"><div class="MessageList">
+          <div class="Message" data-message-id="41"><div class="text-content">Other</div></div>
+          <div class="Message" data-message-id="42"><div class="text-content">Own example</div>
+          <span class="message-time" title="Oct 15, 2026, 18:09:37">18:09</span></div></div></div>''')
+        with tempfile.TemporaryDirectory() as directory:
+            store = CollectorStore(Path(directory)/'collector.sqlite3')
+            result = scan_source(self.page, store, directory,
+                {'max_scrolls':1,'max_messages':2,'overlap_messages':1,'max_media_per_run':0},
+                {'key':'example'}, {'verified':True,'web_peer_route':'-1000000000001'},
+                target_message_id='42', metadata_only=True)
+            self.assertEqual(result['scanned'], 1)
+            self.assertEqual(len(store.events()), 1)
+            self.assertEqual(store.events()[0]['message_id'], '42')
+            self.assertIsNone(store.cursor('example'))
+
+    def test_targeted_scan_can_reach_beyond_two_viewports(self):
+        from scripts.collector.telegram import scan_source
+        from scripts.collector.store import CollectorStore
+        self.page.set_content('''<div id="MiddleColumn"><div class="MessageList" style="height:400px">
+          <div class="Message" data-message-id="41">Other</div></div></div><script>
+          let wheels=0;document.addEventListener('wheel',()=>{wheels++;
+          document.querySelector('.MessageList').innerHTML=wheels>=4 ?
+          '<div class="Message" data-message-id="42"><div class="text-content">Own</div><span class="message-time" title="Oct 15, 2026, 18:09:37">18:09</span></div>' :
+          '<div class="Message" data-message-id="'+(50+wheels)+'">Other</div>';});</script>''')
+        with tempfile.TemporaryDirectory() as directory:
+            store=CollectorStore(Path(directory)/'collector.sqlite3')
+            result=scan_source(self.page,store,directory,
+                {'max_scrolls':7,'max_messages':1,'overlap_messages':1,'max_media_per_run':0},
+                {'key':'example'},{'verified':True,'web_peer_route':'-1000000000001'},
+                target_message_id='42',metadata_only=True)
+            self.assertEqual(result['scanned'],1)
+            self.assertEqual(store.events()[0]['message_id'],'42')
+
     def test_standard_download_saved_by_hash(self):
         self.page.set_content('''<div id="MiddleColumn"><div class="Message" data-message-id="42"><div class="media-inner" onclick="document.querySelector('a').style.display='block'">Open own media</div></div></div>
           <a role="button" aria-label="Download" style="display:none" download="../../test.png" href="data:application/octet-stream;base64,YWJj">Download</a>''')
