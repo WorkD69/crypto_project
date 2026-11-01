@@ -12,13 +12,14 @@ from signal_bot.parser import MAX_PRICE_RATIO
 
 CHECK_BY_EYE = "CHECK_BY_EYE"
 MAX_CHART_DRIFT = 0.03
+MISREAD_THOUSANDS = 1000
 MAX_TEXT = 6000
 MAX_EVIDENCE = 300
 ACTIONS = {"new", "update", "cancel", "result"}
 SIDES = {"LONG", "SHORT"}
 QUOTE_RE = re.compile(r"(USDT|USDC|USD)$")
 CONTRACT_RE = re.compile(r"\.P$|\.PERP$|PERP$|[\s/_-]")
-BASE_NAMES = {"GOLD": "XAU", "SILVER": "XAG"}
+BASE_NAMES = {"GOLD": "XAU", "SILVER": "XAG", "GOOGLE": "GOOGL"}
 MULTIPLIERS = ("", "1000", "10000", "1000000")
 
 INSTRUCTIONS = """Ты разбираешь пост трейдера и найденные на графике зоны входа.
@@ -32,9 +33,13 @@ INSTRUCTIONS = """Ты разбираешь пост трейдера и най�
 Правила:
 - relevant=false и пустой zones, если автор не намечает зону: мем, реклама, новость, обучение без монеты.
 - Одна запись на одну зону. На графике и в тексте их может быть несколько, в том числе по разным монетам.
-- symbol: тикер как на графике или в тексте.
+- symbol: биржевой тикер как на графике или в тексте, а не название компании: GOOGL, а не GOOGLE.
 - side: LONG или SHORT, по замыслу автора. Если направление не определить, зону не записывай.
 - zone_low и zone_high: границы диапазона входа полными числами, 82000, а не 82k. Один уровень: обе границы равны.
+- Каждая рамка на графике это отдельная зона, запиши все. Граница это край рамки, а не ближайшая подпись шкалы:
+  если край лежит между подписями, оцени значение по его положению между ними.
+- Нарисованный путь цены без рамки и без названного автором уровня зоной не считай.
+- Запятая на ценовой шкале отделяет дробную часть: 4,316 это 4.316, а не 4316. Пробел разделяет тысячи.
 - stop: уровень стопа, если он указан, иначе null. targets: цели, иначе []. Числа, а не текст.
 - timeframe: таймфрейм графика, иначе null.
 - action: new для новой зоны, update если автор меняет прежнюю, cancel если отменяет, result если сообщает итог.
@@ -128,6 +133,19 @@ def parse_answer(answer: dict) -> Extraction:
     return Extraction(relevant or bool(zones), tuple(_zone(raw) for raw in zones))
 
 
+def _thousands_misread(zone: Zone, price: float) -> bool:
+    """A decimal comma read as a thousands separator: the screenshot price proves it exactly."""
+    return (zone.chart_price is not None and
+            abs(zone.chart_price / MISREAD_THOUSANDS - price) / price <= MAX_CHART_DRIFT)
+
+
+def _scaled_back(zone: Zone) -> Zone:
+    scale = lambda value: None if value is None else round(value / MISREAD_THOUSANDS, 9)
+    return replace(zone, zone_low=scale(zone.zone_low), zone_high=scale(zone.zone_high), stop=scale(zone.stop),
+                   targets=tuple(scale(target) for target in zone.targets), chart_price=scale(zone.chart_price),
+                   flags=("SCALE_FIXED",))
+
+
 def _near(level: float, price: float) -> bool:
     return max(level / price, price / level) <= MAX_PRICE_RATIO
 
@@ -140,7 +158,9 @@ async def verify_zone(zone: Zone, symbols: set[str], price_at, posted_at: dateti
         price = await price_at(symbol, posted_at)
     except MarketError:
         return replace(zone, symbol=symbol, flags=("PRICE_UNAVAILABLE",))
-    flags = []
+    if _thousands_misread(zone, price):
+        zone = _scaled_back(zone)
+    flags = list(zone.flags)
     if zone.chart_price is not None and abs(zone.chart_price - price) / price > MAX_CHART_DRIFT:
         flags += ["CHART_PRICE_DRIFT", CHECK_BY_EYE]
     low, high, stop = zone.zone_low, zone.zone_high, zone.stop

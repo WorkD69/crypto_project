@@ -36,6 +36,9 @@ class SymbolTest(unittest.TestCase):
         self.assertEqual(normalize_symbol("GOLD", SYMBOLS), "XAUUSDT")
         self.assertEqual(normalize_symbol("Silver", SYMBOLS), "XAGUSDT")
 
+    def test_company_name_on_a_chart(self):
+        self.assertEqual(normalize_symbol("GOOGLE", {"GOOGLUSDT"}), "GOOGLUSDT")
+
     def test_unknown_coin(self):
         self.assertIsNone(normalize_symbol("NOSUCHCOIN", SYMBOLS))
 
@@ -96,6 +99,9 @@ class PromptTest(unittest.TestCase):
         self.assertEqual(prompt.count("</post>"), 1)
         self.assertTrue(prompt.rstrip().endswith("</post>"))
 
+    def test_decimal_comma_is_explained(self):
+        self.assertIn("4,316 это 4.316", build_prompt("пост"))
+
     def test_long_text_is_cut(self):
         self.assertLess(len(build_prompt("я" * 50_000)), 12_000)
 
@@ -152,6 +158,17 @@ class VerifyTest(unittest.TestCase):
 
     def test_exactly_two_times_stays(self):
         self.assertEqual(self.verify(zone(targets=[160000])).targets, (160000,))
+
+    def test_comma_read_as_thousands_is_scaled_back(self):
+        misread = zone(symbol="BTCUSDT", zone_low=4410, zone_high=4440, stop=4600, targets=[3900], chart_price=4316)
+        result = self.verify(misread, price=4.32)
+        self.assertEqual((result.zone_low, result.zone_high, result.stop), (4.41, 4.44, 4.6))
+        self.assertEqual(result.targets, (3.9,))
+        self.assertEqual(result.chart_price, 4.316)
+        self.assertEqual(result.flags, ("SCALE_FIXED",))
+
+    def test_far_chart_price_is_not_scaled_without_the_exact_ratio(self):
+        self.assertIn("CHART_PRICE_DRIFT", self.verify(zone(chart_price=4900), price=4.32).flags)
 
     def test_market_failure_keeps_the_zone(self):
         result = self.verify(zone(), price=MarketError("down"))

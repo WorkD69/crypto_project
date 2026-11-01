@@ -5,7 +5,7 @@
 ## Сервер
 
 - Ubuntu 24.04, 1 CPU, 2 ГБ RAM, около 4.5 ГБ свободного диска. Рядом работают контейнеры Hermes и другие сервисы, их не менять.
-- Служба `crypto-signals`, пользователь `cryptosignals`, описание в [deploy/crypto-signals.service](../../deploy/crypto-signals.service).
+- Служба бота `crypto-signals`, пользователь `cryptosignals`, описание в [deploy/crypto-signals.service](../../deploy/crypto-signals.service).
 
 | Что | Где |
 | --- | --- |
@@ -14,6 +14,32 @@
 | Окружение Python | `/opt/crypto-signals/.venv` |
 | База и сессия чтения | `/var/lib/crypto-signals` |
 | Настройки | `/etc/crypto-signals/secrets.env`, `/etc/crypto-signals/sources.json` |
+| Спул картинок | `/var/lib/crypto-signals/spool` |
+| Состояние брокера | `/var/lib/crypto-hermes-broker` |
+
+## Брокер Hermes
+
+Служба `crypto-hermes-broker`, описание в [deploy/crypto-hermes-broker.service](../../deploy/crypto-hermes-broker.service), код в `signal_bot/broker.py`. Брокер работает под отдельным пользователем `crypto-hermes` в группе `docker`. У бота доступа к Docker нет: он говорит с брокером через сокет `/run/crypto-hermes/broker.sock`, куда пускают только группу `cryptosignals`.
+
+Брокер принимает только `{prompt, image_sha256}` и запускает одну фиксированную команду, без инструментов модели. Картинка берётся из `/var/lib/crypto-signals/spool/<sha>.jpg`, на время вызова копируется в спул контейнера и сразу удаляется.
+
+Ограничения: один вызов за раз, 120 секунд на вызов, 300 вызовов в сутки (`BROKER_DAILY_LIMIT`). При признаках лимита брокер делает паузу на час. Счётчик и пауза лежат в `/var/lib/crypto-hermes-broker/state.json`.
+
+Первая установка выполняется из Git Bash после `deploy.sh`, повторный запуск безопасен:
+
+```bash
+bash deploy/setup-broker.sh
+```
+
+## Эталон
+
+Посты с разметкой лежат на сервере в `/var/lib/crypto-signals/golden/` и в Git не попадают. Команды на сервере, `collect` выполняется при остановленной службе `crypto-signals`, потому что сессия общая:
+
+```bash
+systemd-run --wait --pipe -p User=cryptosignals -p Group=cryptosignals     -p EnvironmentFile=/etc/crypto-signals/secrets.env -p WorkingDirectory=/opt/crypto-signals     /opt/crypto-signals/.venv/bin/python -m signal_bot.golden collect
+```
+
+Для `run` и `score` команда та же, секреты им не нужны. `run` читает `labels.json` и продолжает с места остановки, а `score` печатает таблицу и проценты.
 
 ## Подключение
 
