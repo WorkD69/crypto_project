@@ -45,6 +45,7 @@ class CommandTest(unittest.TestCase):
         self.assertEqual(argv[argv.index("--toolsets") + 1], "no_mcp")
         self.assertEqual(argv[argv.index("--max-turns") + 1], "1")
         self.assertEqual(argv[argv.index("-m") + 1], "gpt-6-luna")
+        self.assertEqual(argv[argv.index("--reasoning") + 1], "medium")
         self.assertNotIn("--image", argv)
 
     def test_prompt_goes_through_stdin(self):

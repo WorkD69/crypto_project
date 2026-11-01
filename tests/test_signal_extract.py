@@ -99,6 +99,9 @@ class PromptTest(unittest.TestCase):
         self.assertEqual(prompt.count("</post>"), 1)
         self.assertTrue(prompt.rstrip().endswith("</post>"))
 
+    def test_drawn_price_path_is_not_excluded(self):
+        self.assertNotIn("Нарисованный путь", build_prompt("пост"))
+
     def test_decimal_comma_is_explained(self):
         self.assertIn("4,316 это 4.316", build_prompt("пост"))
 

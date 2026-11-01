@@ -31,7 +31,7 @@ DOCKER = ["docker", "exec", "-i", "-u", "hermes", "hermes-agent"]
 # docker exec does not stop the process in the container when the client dies, so the limit runs inside.
 HERMES = [*DOCKER, "timeout", "-k", "5", str(CALL_TIMEOUT), "/opt/hermes/.venv/bin/hermes", "chat",
           "--query-file", "-", "--oneshot", "-Q", "--ignore-rules", "--source", "tool", "--toolsets", "no_mcp",
-          "--max-turns", "1", "--reasoning", "low", "-m", "gpt-6-luna", "--format", "stream-json"]
+          "--max-turns", "1", "--reasoning", "medium", "-m", "gpt-6-luna", "--format", "stream-json"]
 COPY_SCRIPT = 'umask 077; mkdir -p "${0%/*}"; cat > "$0"'
 
 SHA_RE = re.compile(r"[0-9a-f]{64}")

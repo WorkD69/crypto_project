@@ -69,7 +69,7 @@
 **Цель:** безопасно вызвать Hermes из бота и проверить качество чтения графиков. Это контрольная точка: без приемлемого качества следующие этапы не начинать.
 
 1. Новый сервис `crypto-hermes-broker`: отдельный пользователь в группе `docker`, Unix-сокет `/run/crypto-hermes/broker.sock`, доступный только `cryptosignals`. Служба бота сохраняет `NoNewPrivileges` и не получает доступ к Docker.
-2. Брокер принимает только `{prompt, image_sha256}`. Команда фиксированная: `docker exec -i -u hermes hermes-agent /opt/hermes/.venv/bin/hermes chat --query-file - --oneshot -Q --ignore-rules --source tool --toolsets no_mcp --max-turns 1 --reasoning low -m gpt-6-luna --format stream-json`, плюс `--image`.
+2. Брокер принимает только `{prompt, image_sha256}`. Команда фиксированная: `docker exec -i -u hermes hermes-agent /opt/hermes/.venv/bin/hermes chat --query-file - --oneshot -Q --ignore-rules --source tool --toolsets no_mcp --max-turns 1 --reasoning medium -m gpt-6-luna --format stream-json`, плюс `--image`.
 3. Картинка копируется в `/opt/hermes-platform/data/crypto-spool/<sha>.jpg`, после вызова удаляется. Модель не получает произвольных путей.
 4. Один вызов за раз, таймаут 120 секунд, один повтор только при неверном JSON. Суточный счётчик вызовов (старт 300), остановка при признаках лимита, приоритет живых постов над историей.
 5. `signal_bot/hermes.py`: клиент сокета и разбор ответа. Перенести логику `parse_stream`, нормализовать неразрывные пробелы, проверять ответ по схеме.
