@@ -22,7 +22,7 @@ from signal_bot.hermes import BadAnswer, BrokerClient
 MAX_PAGE = 256_000
 MAX_DIGEST = 6000
 MAX_PART = 12_000
-MIN_QUOTE, MAX_QUOTE = 8, 240
+MIN_QUOTE, MAX_QUOTE = 8, 1000
 PAGE_RE = re.compile(r"https://telegra\.ph/([A-Za-z0-9-]+)")
 IMAGE_RE = re.compile(r"/file/[A-Za-z0-9_-]+\.[a-z]{3,4}")
 NUMBER_RE = re.compile(r"\d+(?:[.,]\d+)?")
@@ -155,8 +155,12 @@ async def rules(folder: Path) -> None:
         found = []
         for part in split_paragraphs(page["paragraphs"]):
             body = "\n".join(f"[{paragraph['id']}] {paragraph['text']}" for paragraph in part)
-            reply = await client.ask(f"{RULES_PROMPT}{page['title']}\n{body}\n</lesson>\n",
-                                     validate=lambda answer, part=part: parse_rules(answer, part), live=False)
+            try:
+                reply = await client.ask(f"{RULES_PROMPT}{page['title']}\n{body}\n</lesson>\n",
+                                         validate=lambda answer, part=part: parse_rules(answer, part), live=False)
+            except BadAnswer as exc:
+                print(page["title"][:40], "part skipped", exc.code)
+                continue
             found += reply.parsed
         done[page["url"]] = {"title": page["title"], "rules": found}
         print(page["title"][:40], "rules", len(found))

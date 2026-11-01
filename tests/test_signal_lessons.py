@@ -60,6 +60,11 @@ class RulesTest(unittest.TestCase):
     def test_quote_from_another_paragraph_is_dropped(self):
         self.assertEqual(verified_rules([self.rule(paragraph_id="p0")], self.paragraphs), [])
 
+    def test_whole_paragraph_can_be_quoted(self):
+        text = "я " * 300
+        kept = verified_rules([self.rule(quote=text.strip(), paragraph_id="p9")], [{"id": "p9", "text": text}])
+        self.assertEqual(len(kept), 1)
+
     def test_too_short_quote_is_dropped(self):
         self.assertEqual(verified_rules([self.rule(quote="61")], self.paragraphs), [])
 
