@@ -95,3 +95,11 @@ node_modules/
 *.swp
 Thumbs.db
 .DS_Store
+
+# Signal bot: private runtime config and data, never published
+secrets.env
+sources.json
+server.env
+spool/
+golden/
+.superpowers/
