@@ -82,9 +82,10 @@ class Extraction:
     replies: tuple[Reply, ...] = ()
 
 
-def build_prompt(text: str) -> str:
+def build_prompt(text: str, knowledge: str = "") -> str:
     body = text[:MAX_TEXT].replace("</post>", "< /post>")
-    return f"{INSTRUCTIONS}\n<post>\n{body}\n</post>\n"
+    memo = f"\nЗнания для чтения графиков, из уроков автора:\n<knowledge>\n{knowledge}\n</knowledge>\n" if knowledge else ""
+    return f"{INSTRUCTIONS}{memo}\n<post>\n{body}\n</post>\n"
 
 
 def normalize_symbol(raw: str, symbols: set[str]) -> str | None:
@@ -194,8 +195,8 @@ def merge_zones(zones: list[Zone]) -> tuple[Zone, ...]:
 
 
 async def extract_post(client, text: str, images: list[str], posted_at: datetime, symbols: set[str], price_at,
-                       live: bool = True) -> Extraction:
-    prompt = build_prompt(text)
+                       live: bool = True, knowledge: str = "") -> Extraction:
+    prompt = build_prompt(text, knowledge)
     replies = [await client.ask(prompt, image_sha256=image, validate=parse_answer, live=live)
                for image in images or [None]]
     zones = [await verify_zone(zone, symbols, price_at, posted_at) for reply in replies for zone in reply.parsed.zones]

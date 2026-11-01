@@ -41,6 +41,12 @@ systemd-run --wait --pipe -p User=cryptosignals -p Group=cryptosignals     -p En
 
 Для `run` и `score` команда та же, секреты им не нужны. `run` читает `labels.json` и продолжает с места остановки, а `score` печатает таблицу и проценты.
 
+## Уроки
+
+Список адресов лежит в `/etc/crypto-signals/lessons.json`, формат показан в [deploy/lessons.example.json](../../deploy/lessons.example.json). Читаются только страницы Telegraph из этого списка. Тексты, правила и памятка лежат на сервере в `/var/lib/crypto-signals/lessons/` и в Git не попадают.
+
+Запуск той же командой, что и для эталона: `python -m signal_bot.lessons fetch`, затем `rules` и `digest`. `rules` продолжает с места остановки. Цитаты правил и числа памятки проверяются кодом. Файл `digest.txt` подключается к разбору постов автоматически.
+
 ## Подключение
 
 Команды ниже рассчитаны на Git Bash. Первая строка подставляет адрес и ключ из `deploy/server.env`.

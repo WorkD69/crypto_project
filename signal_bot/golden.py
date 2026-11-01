@@ -142,6 +142,8 @@ async def run(folder: Path, name: str) -> None:
     results = read_json(results_path, {})
     client, market = BrokerClient(), BybitClient()
     symbols = await market.symbols()
+    memo = folder.parent / "lessons" / "digest.txt"
+    knowledge = memo.read_text(encoding="utf-8") if memo.exists() else ""
     for key in labels:
         if "zones" in results.get(key, {}):
             continue
@@ -150,7 +152,7 @@ async def run(folder: Path, name: str) -> None:
         try:
             spooled = [write_spool(SPOOL, (folder / f"{sha}.jpg").read_bytes()) for sha in post["images"]]
             found = await extract_post(client, post["text"], spooled, datetime.fromisoformat(post["date"]), symbols,
-                                       market.price_at, live=False)
+                                       market.price_at, live=False, knowledge=knowledge)
         except HermesError as exc:
             results[key] = {"error": exc.code}
             print(key, "error", exc.code)
