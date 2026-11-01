@@ -1,10 +1,12 @@
+import tempfile
 import unittest
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from pathlib import Path
 
-from signal_bot.golden import group_album, score, set_files, zone_matches
+from signal_bot.golden import OWNER_POSTS, OWNER_SET, all_posts, group_album, read_json, save_fix, score, set_files, \
+    write_json, zone_matches
 
 
 def label(symbol="BTCUSDT", side="SHORT", low=82000, high=84000):
@@ -118,6 +120,54 @@ class AlbumTest(unittest.TestCase):
 
     def test_posts_without_photos_are_left_out(self):
         self.assertEqual(group_album([Message(1, None, "текст")]), [])
+
+
+class OwnerFixTest(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.folder = Path(directory.name)
+        self.post = {"key": "c:5", "author": "Автор", "url": None, "date": "2026-11-01T12:00:00+00:00", "images": [],
+                     "text": "пост"}
+        self.zone = {"symbol": "BTCUSDT", "side": "SHORT", "zone_low": 82000.0, "zone_high": 84000.0, "stop": None,
+                     "targets": [78000.0], "status": "WATCHING"}
+
+    def test_fix_becomes_a_label_of_the_owner_set(self):
+        save_fix(self.folder, self.post, [self.zone])
+        labels = read_json(set_files(self.folder, OWNER_SET)[0], {})
+        self.assertEqual(labels["c:5"]["zones"][0]["low"], 82000.0)
+        self.assertEqual(labels["c:5"]["zones"][0]["high"], 84000.0)
+        self.assertTrue(labels["c:5"]["sure"])
+
+    def test_post_is_kept_apart_from_the_collected_set(self):
+        save_fix(self.folder, self.post, [self.zone])
+        self.assertEqual(read_json(self.folder / OWNER_POSTS, {})["c:5"]["text"], "пост")
+        self.assertFalse((self.folder / "posts.json").exists())
+
+    def test_rejected_zone_leaves_no_label(self):
+        save_fix(self.folder, self.post, [{**self.zone, "status": "REJECTED"}])
+        self.assertEqual(read_json(set_files(self.folder, OWNER_SET)[0], {})["c:5"]["zones"], [])
+
+    def test_zone_without_bounds_leaves_no_label(self):
+        save_fix(self.folder, self.post, [{**self.zone, "zone_low": None, "zone_high": None}])
+        self.assertEqual(read_json(set_files(self.folder, OWNER_SET)[0], {})["c:5"]["zones"], [])
+
+    def test_second_fix_replaces_the_first(self):
+        save_fix(self.folder, self.post, [self.zone])
+        save_fix(self.folder, self.post, [{**self.zone, "zone_low": 81000.0}])
+        labels = read_json(set_files(self.folder, OWNER_SET)[0], {})
+        self.assertEqual([zone["low"] for zone in labels["c:5"]["zones"]], [81000.0])
+
+    def test_labels_are_scored_like_any_other(self):
+        save_fix(self.folder, self.post, [self.zone])
+        label = read_json(set_files(self.folder, OWNER_SET)[0], {})["c:5"]["zones"]
+        found = [{"symbol": "BTCUSDT", "side": "SHORT", "zone_low": 82000.0, "zone_high": 84000.0}]
+        self.assertEqual(score([{"labels": label, "predicted": found}])["bounds"], 1.0)
+
+    def test_owner_posts_join_the_run(self):
+        write_json(self.folder / "posts.json", [{"key": "a"}])
+        write_json(self.folder / OWNER_POSTS, {"c:5": {"key": "c:5"}})
+        self.assertEqual(set(all_posts(self.folder)), {"a", "c:5"})
 
 
 if __name__ == "__main__":

@@ -4,13 +4,18 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 
 from telegram import Chat, Message, MessageOriginChannel, MessageOriginHiddenUser, MessageOriginUser, User
+from telethon.tl.types import MessageMediaPhoto, MessageMediaWebPage
 
 from signal_bot.app import origin_of
-from signal_bot.reader import Source, catch_up, load_sources, origin_key, post_from
+from signal_bot.reader import Source, catch_up, has_photo, load_sources, origin_key, post_from
 
 T0 = datetime(2026, 11, 1, tzinfo=timezone.utc)
 PUBLIC = Source(id=1000000001, name="Public Author", username="example_public")
 PRIVATE = Source(id=1000000002, name="Private Author", username=None)
+
+
+def message(message_id=9, text="x", grouped_id=None, media=None):
+    return SimpleNamespace(id=message_id, message=text, date=T0, grouped_id=grouped_id, media=media)
 
 
 class SourceTest(unittest.TestCase):
@@ -19,17 +24,41 @@ class SourceTest(unittest.TestCase):
         self.assertEqual(sources, {5: Source(5, "A", None)})
 
     def test_public_post_link(self):
-        post = post_from(PUBLIC, SimpleNamespace(id=77, message="BTC лонг"))
+        post = post_from(PUBLIC, message(77, "BTC лонг"))
         self.assertEqual(post.url, "https://t.me/example_public/77")
         self.assertEqual(post.author, "Public Author")
         self.assertEqual(post.text, "BTC лонг")
 
     def test_private_post_link(self):
-        post = post_from(PRIVATE, SimpleNamespace(id=9, message="x"))
-        self.assertEqual(post.url, "https://t.me/c/1000000002/9")
+        self.assertEqual(post_from(PRIVATE, message()).url, "https://t.me/c/1000000002/9")
 
     def test_media_without_text_gives_empty_text(self):
-        self.assertEqual(post_from(PUBLIC, SimpleNamespace(id=9, message=None)).text, "")
+        self.assertEqual(post_from(PUBLIC, message(text=None)).text, "")
+
+    def test_post_keeps_its_time(self):
+        self.assertEqual(post_from(PUBLIC, message()).posted_at, T0)
+
+    def test_single_post_is_no_album(self):
+        self.assertIsNone(post_from(PUBLIC, message()).album)
+
+    def test_album_parts_share_a_key_within_the_channel(self):
+        first, second = post_from(PUBLIC, message(9, grouped_id=5)), post_from(PUBLIC, message(10, grouped_id=5))
+        self.assertEqual(first.album, second.album)
+        self.assertNotEqual(post_from(PRIVATE, message(9, grouped_id=5)).album, first.album)
+
+    def test_each_part_has_its_own_key(self):
+        self.assertEqual(post_from(PUBLIC, message(9)).part_key, origin_key(PUBLIC.id, 9))
+
+
+class PhotoTest(unittest.TestCase):
+    def test_photo(self):
+        self.assertTrue(has_photo(message(media=MessageMediaPhoto())))
+
+    def test_link_preview_is_not_a_photo(self):
+        self.assertFalse(has_photo(message(media=MessageMediaWebPage(webpage=None))))
+
+    def test_text_post(self):
+        self.assertFalse(has_photo(message()))
 
 
 class CatchUpTest(unittest.TestCase):

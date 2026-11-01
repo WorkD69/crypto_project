@@ -30,6 +30,8 @@ MIN_BOUNDS = 0.8
 EPSILON = 1e-9
 SCAN_LIMIT = 400
 LIVE_ACTIONS = {"new", "update"}
+OWNER_SET = "owner"
+OWNER_POSTS = f"posts-{OWNER_SET}.json"
 
 
 def zone_matches(label: dict, found: dict) -> bool:
@@ -100,6 +102,27 @@ def write_json(path: Path, value) -> None:
     os.replace(temporary, path)
 
 
+def all_posts(folder: Path) -> dict:
+    """Owner fixes live in their own file: collect overwrites posts.json."""
+    posts = {post["key"]: post for post in read_json(folder / "posts.json", [])}
+    return {**posts, **read_json(folder / OWNER_POSTS, {})}
+
+
+def save_fix(folder: Path, post: dict, zones: list[dict]) -> None:
+    """The owner reads every zone of a corrected post, so all of them make its new label."""
+    labels_path = set_files(folder, OWNER_SET)[0]
+    labels = read_json(labels_path, {})
+    posts = read_json(folder / OWNER_POSTS, {})
+    kept = [zone for zone in zones if zone["status"] != "REJECTED" and zone["zone_low"] is not None]
+    labels[post["key"]] = {"sure": True, "note": "правка владельца",
+                           "zones": [{"symbol": zone["symbol"], "side": zone["side"], "low": zone["zone_low"],
+                                      "high": zone["zone_high"], "stop": zone["stop"], "targets": zone["targets"]}
+                                     for zone in kept]}
+    posts[post["key"]] = post
+    write_json(labels_path, labels)
+    write_json(folder / OWNER_POSTS, posts)
+
+
 async def collect(folder: Path, config: Path, per_source: int, days: int) -> None:
     from telethon import TelegramClient
     from telethon.tl.types import PeerChannel
@@ -137,7 +160,7 @@ async def collect(folder: Path, config: Path, per_source: int, days: int) -> Non
 
 async def run(folder: Path, name: str) -> None:
     labels_path, results_path = set_files(folder, name)
-    posts = {post["key"]: post for post in read_json(folder / "posts.json", [])}
+    posts = all_posts(folder)
     labels = read_json(labels_path, {})
     results = read_json(results_path, {})
     client, market = BrokerClient(), BybitClient()

@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from signal_bot.hermes import BadAnswer, BrokerClient, Gate, HermesError, parse_stream, write_spool
+from signal_bot.hermes import BadAnswer, BrokerClient, Gate, HermesError, SpoolFull, parse_stream, write_spool
 
 
 def stream(text, exit_code=0, extra=()):
@@ -212,6 +212,18 @@ class SpoolTest(unittest.TestCase):
             sha = write_spool(Path(folder), b"\xff\xd8\xffdata")
             self.assertEqual(len(sha), 64)
             self.assertEqual((Path(folder) / f"{sha}.jpg").read_bytes(), b"\xff\xd8\xffdata")
+
+    def test_full_spool_refuses_a_new_image(self):
+        with tempfile.TemporaryDirectory() as folder:
+            write_spool(Path(folder), b"12345", limit=8)
+            with self.assertRaises(SpoolFull):
+                write_spool(Path(folder), b"6789", limit=8)
+
+    def test_image_that_fits_is_written(self):
+        with tempfile.TemporaryDirectory() as folder:
+            write_spool(Path(folder), b"12345", limit=9)
+            write_spool(Path(folder), b"6789", limit=9)
+            self.assertEqual(len(list(Path(folder).glob("*.jpg"))), 2)
 
 
 if __name__ == "__main__":

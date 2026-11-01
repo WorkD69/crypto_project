@@ -16,6 +16,7 @@ from typing import Any, Callable
 SOCKET = "/run/crypto-hermes/broker.sock"
 CLIENT_TIMEOUT = 180
 MAX_REPLY = 16 * 1024 * 1024
+SPOOL_LIMIT = 500 * 1024 * 1024
 SPACES = str.maketrans({" ": " ", " ": " ", " ": " "})
 
 
@@ -27,6 +28,10 @@ class HermesError(RuntimeError):
 
 class BadAnswer(HermesError):
     """The model answered, but not with what was asked. Worth one more try."""
+
+
+class SpoolFull(RuntimeError):
+    """No room for a new image: the post waits for the queue to drain instead of being lost."""
 
 
 @dataclass(frozen=True)
@@ -149,8 +154,10 @@ class BrokerClient:
                 return await self._attempt(prompt, image_sha256, validate)
 
 
-def write_spool(folder: Path, data: bytes) -> str:
+def write_spool(folder: Path, data: bytes, limit: int = SPOOL_LIMIT) -> str:
     """Store an image by its hash so the broker, in the same group, can read it."""
+    if sum(item.stat().st_size for item in folder.glob("*.jpg")) + len(data) > limit:
+        raise SpoolFull("SPOOL_FULL")
     sha = hashlib.sha256(data).hexdigest()
     target = folder / f"{sha}.jpg"
     temporary = folder / f"{sha}.tmp"

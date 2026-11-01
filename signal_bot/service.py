@@ -1,14 +1,22 @@
 """Business flow between posts, market and storage. Telegram-free."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 
+from signal_bot.extract import Zone, extract_post
+from signal_bot.hermes import BadAnswer, HermesError
 from signal_bot.market import INTERVAL, MarketError
-from signal_bot.parser import apply_price, parse_post
 from signal_bot.tracker import Trade, advance
 
 SYMBOLS_TTL = timedelta(hours=6)
+ALBUM_PAUSE = timedelta(seconds=5)
+RETRY_EVERY = timedelta(minutes=5)
+MAX_RETRY = timedelta(hours=1)
+MAX_DOUBLINGS = 8
+MAX_HOPELESS_TRIES = 3
+HOPELESS = {"IMAGE_REJECTED", "BAD_REQUEST", "UNEXPECTED_TOOL_USE"}
+LINKED = {"update", "cancel", "result"}
 
 
 @dataclass(frozen=True)
@@ -17,12 +25,24 @@ class Incoming:
     origin_key: str | None
     url: str | None
     text: str
+    posted_at: datetime
+    part_key: str
+    message_id: int
+    album: str | None = None
+    file_id: str | None = None
+    reply_to: int | None = None
 
 
 @dataclass(frozen=True)
 class Outcome:
     kind: str
-    idea_id: int | None = None
+    post_id: int | None = None
+
+
+@dataclass(frozen=True)
+class Analysis:
+    kind: str
+    unclear: tuple[Zone, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -47,38 +67,60 @@ class SymbolCache:
         return self.value
 
 
-async def process_post(storage, market, post: Incoming, symbols: set[str], now: datetime) -> Outcome:
-    text = post.text.strip()
-    if not text:
-        return Outcome("empty")
-    parsed = parse_post(text, symbols)
-    price, levels = None, None
-    if parsed.is_idea:
+def accept(storage, post: Incoming, image: str | None, now: datetime) -> Outcome:
+    """Save a post before reading it: whatever fails later, the post is already safe."""
+    ready_at = now + ALBUM_PAUSE if post.album else now
+    stored = storage.add_part(post.author, post.origin_key, post.url, post.text, post.posted_at, post.album,
+                              post.part_key, post.message_id, image, post.file_id, post.reply_to, ready_at, now)
+    if stored is None:
+        return Outcome("duplicate")
+    post_id, created = stored
+    return Outcome("queued" if created else "joined", post_id)
+
+
+def find_link(open_zones: list[dict], zone: Zone) -> tuple[dict | None, int]:
+    """The model proposes, the code decides: only an open zone of this author, coin and side counts."""
+    same = [item for item in open_zones if item["symbol"] == zone.symbol and zone.side in (None, item["side"])]
+    if zone.replaces is not None:
+        return next((item for item in same if item["id"] == zone.replaces), None), len(same)
+    return (same[0] if len(same) == 1 else None), len(same)
+
+
+async def _fields(zone: Zone, market) -> dict:
+    price = None
+    if "UNKNOWN_SYMBOL" not in zone.flags:
         try:
-            price = await market.price(parsed.symbol)
+            price = await market.price(zone.symbol)
         except MarketError:
             pass
-        levels = apply_price(parsed, price)
-    # Real author prose mentions coins and levels constantly; only a stop makes it a trade.
-    kind = "idea" if levels and levels.stop is not None else "opinion"
-    post_id = storage.add_post(post.author, post.origin_key, post.url, text, kind, now)
-    if post_id is None:
-        return Outcome("duplicate")
-    if kind == "opinion":
-        return Outcome("opinion")
-    entry_low, entry_high, assumed = levels.entry_low, levels.entry_high, False
-    if entry_low is None and price is not None:
-        entry_low, entry_high, assumed = price, price, True
-    warnings, status = list(levels.warnings), "NOT_TRACKED"
-    if levels.side and entry_low is not None and levels.stop is not None:
-        trade = Trade(levels.side, entry_low, entry_high, levels.stop,
-                      levels.targets[0] if levels.targets else None, now)
-        status = advance(trade, []).status
-        if status == "NOT_TRACKED":
-            warnings.append("BAD_LEVEL_ORDER")
-    idea_id = storage.add_idea(post_id, levels.symbol, levels.side, entry_low, entry_high, levels.stop,
-                               levels.targets, assumed, price, warnings, now, status=status)
-    return Outcome("idea", idea_id)
+    return {**asdict(zone), "targets": list(zone.targets), "flags": list(zone.flags), "price": price}
+
+
+async def analyze_post(storage, broker, market, post: dict, symbols: set[str], now: datetime) -> Analysis:
+    open_zones = storage.open_zones(post["author"])
+    found = await extract_post(broker, post["edited_text"] or post["text"], storage.post_images(post["id"]),
+                               datetime.fromisoformat(post["posted_at"]), symbols, market.price_at,
+                               open_zones=open_zones)
+    items, unclear = [], []
+    for zone in found.zones:
+        target, candidates = find_link(open_zones, zone) if zone.action in LINKED else (None, 0)
+        if target:
+            items.append((zone.action, await _fields(zone, market), target["id"]))
+        elif zone.action in {"new", "update"}:
+            items.append(("new", await _fields(zone, market), None))
+        elif candidates:
+            unclear.append(zone)
+    kind = "zones" if items else "opinion"
+    storage.save_parse(post["id"], kind, items, now)
+    return Analysis(kind, tuple(unclear))
+
+
+def next_try(post: dict, error: Exception, now: datetime) -> datetime | None:
+    """An outage waits as long as it takes; an answer that cannot be read stops after a few tries."""
+    hopeless = (not isinstance(error, HermesError) or isinstance(error, BadAnswer) or error.code in HOPELESS)
+    if hopeless and post["attempts"] + 1 >= MAX_HOPELESS_TRIES:
+        return None
+    return now + min(RETRY_EVERY * 2 ** min(post["attempts"], MAX_DOUBLINGS), MAX_RETRY)
 
 
 def _next_candle(moment: datetime) -> datetime:

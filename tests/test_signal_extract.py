@@ -3,8 +3,8 @@ import unittest
 from dataclasses import replace
 from datetime import datetime, timezone
 
-from signal_bot.extract import CHECK_BY_EYE, Zone, build_prompt, extract_post, merge_zones, normalize_symbol, \
-    parse_answer, verify_zone
+from signal_bot.extract import CHART_ONLY, CHECK_BY_EYE, NOT_IN_POST, Zone, build_prompt, extract_post, in_text, \
+    merge_zones, normalize_symbol, parse_answer, verify_zone
 from signal_bot.hermes import BadAnswer, Reply
 from signal_bot.market import MarketError
 
@@ -74,6 +74,12 @@ class SchemaTest(unittest.TestCase):
         result = zone(action="cancel", zone_low=None, zone_high=None, side=None)
         self.assertIsNone(result.zone_low)
 
+    def test_link_to_an_open_zone_is_kept(self):
+        self.assertEqual(zone(action="update", replaces=12).replaces, 12)
+
+    def test_link_is_optional(self):
+        self.assertIsNone(zone().replaces)
+
     def test_invalid_answers_are_refused(self):
         bad = [{"zones": []}, {"relevant": True}, {"relevant": "yes", "zones": []},
                {"relevant": True, "zones": [raw_zone(side="UP")]},
@@ -90,6 +96,8 @@ class SchemaTest(unittest.TestCase):
                {"relevant": True, "zones": [raw_zone(confidence=2)]},
                {"relevant": True, "zones": [raw_zone(symbol="")]},
                {"relevant": True, "zones": [raw_zone(evidence=None)]},
+               {"relevant": True, "zones": [raw_zone(replaces="12")]},
+               {"relevant": True, "zones": [raw_zone(replaces=True)]},
                {"relevant": True, "zones": ["BTC"]}]
         for answer in bad:
             with self.assertRaises(BadAnswer, msg=str(answer)):
@@ -117,6 +125,16 @@ class PromptTest(unittest.TestCase):
 
     def test_decimal_comma_is_explained(self):
         self.assertIn("4,316 это 4.316", build_prompt("пост"))
+
+    def test_open_zones_of_the_author_are_listed(self):
+        prompt = build_prompt("пост", open_zones=[{"id": 12, "symbol": "BTCUSDT", "side": "SHORT", "zone_low": 82000.0,
+                                                  "zone_high": 84000.0}])
+        self.assertIn("#12 BTCUSDT SHORT 82000–84000", prompt)
+        self.assertIn('"replaces"', prompt)
+        self.assertLess(prompt.index("#12"), prompt.index("<post>"))
+
+    def test_no_open_zones_means_no_list(self):
+        self.assertNotIn("<open_zones>", build_prompt("пост"))
 
     def test_long_text_is_cut(self):
         self.assertLess(len(build_prompt("я" * 50_000)), 12_000)
@@ -226,11 +244,12 @@ class ExtractPostTest(unittest.TestCase):
             answer = self.answers.pop(0)
             return Reply(answer, {"total": 10}, 5, validate(answer))
 
-    def extract(self, client, images, live=True):
+    def extract(self, client, images, live=True, text="текст", open_zones=()):
         async def price_at(symbol, moment):
             return 2400.0 if symbol == "ETHUSDT" else 80000.0
 
-        return asyncio.run(extract_post(client, "текст", images, POSTED, SYMBOLS, price_at, live=live))
+        return asyncio.run(extract_post(client, text, images, POSTED, SYMBOLS, price_at, live=live,
+                                        open_zones=open_zones))
 
     def test_each_image_of_an_album_gets_its_own_call(self):
         client = self.Client({"relevant": True, "zones": [raw_zone()]},
@@ -257,10 +276,68 @@ class ExtractPostTest(unittest.TestCase):
                              {"relevant": True, "zones": [raw_zone(symbol="BTC/USDT")]})
         self.assertEqual(len(self.extract(client, ["a" * 64, "b" * 64]).zones), 1)
 
+    def test_zone_only_on_a_chart_asks_for_eyes(self):
+        client = self.Client({"relevant": True, "zones": [raw_zone()]})
+        found = self.extract(client, ["a" * 64]).zones[0]
+        self.assertIn(CHART_ONLY, found.flags)
+        self.assertIn(CHECK_BY_EYE, found.flags)
+
+    def test_zone_written_in_the_text_stays_plain(self):
+        client = self.Client({"relevant": True, "zones": [raw_zone()]})
+        self.assertEqual(self.extract(client, ["a" * 64], text="шорт 82000-84000").zones[0].flags, ())
+
+    def test_levels_found_nowhere_are_flagged(self):
+        client = self.Client({"relevant": True, "zones": [raw_zone()]})
+        found = self.extract(client, []).zones[0]
+        self.assertIn(NOT_IN_POST, found.flags)
+        self.assertIn(CHECK_BY_EYE, found.flags)
+
+    def test_cancel_is_not_marked_as_chart_zone(self):
+        client = self.Client({"relevant": True, "zones": [raw_zone(action="cancel", zone_low=None, zone_high=None)]})
+        self.assertEqual(self.extract(client, ["a" * 64]).zones[0].flags, ())
+
+    def test_zone_remembers_its_image(self):
+        client = self.Client({"relevant": True, "zones": [raw_zone()]})
+        self.assertEqual(self.extract(client, ["a" * 64]).zones[0].image, "a" * 64)
+
+    def test_open_zones_reach_the_prompt(self):
+        client = self.Client({"relevant": False, "zones": []})
+        self.extract(client, [], open_zones=[{"id": 3, "symbol": "BTCUSDT", "side": "LONG", "zone_low": 1.0,
+                                              "zone_high": 2.0}])
+        self.assertIn("#3 BTCUSDT LONG", client.calls[0][0])
+
     def test_priority_reaches_the_client(self):
         client = self.Client({"relevant": False, "zones": []})
         self.extract(client, [], live=False)
         self.assertFalse(client.calls[0][2])
+
+
+class ZoneOriginTest(unittest.TestCase):
+    def test_plain_numbers(self):
+        self.assertTrue(in_text(zone(zone_low=2380, zone_high=2460), "ETH шорт от 2380-2460"))
+
+    def test_shared_thousands_suffix(self):
+        self.assertTrue(in_text(zone(), "шорт от 82–84k"))
+        self.assertTrue(in_text(zone(), "шорт от 82к до 84к"))
+
+    def test_fraction_with_thousands_suffix(self):
+        self.assertTrue(in_text(zone(zone_low=82500, zone_high=82500), "уровень 82.5k"))
+
+    def test_spaces_and_commas_inside_numbers(self):
+        self.assertTrue(in_text(zone(), "зона 82 000 - 84 000"))
+        self.assertTrue(in_text(zone(), "зона 82,000 - 84,000"))
+
+    def test_decimal_comma(self):
+        self.assertTrue(in_text(zone(zone_low=0.42, zone_high=0.44), "вход 0,42-0,44"))
+
+    def test_both_bounds_are_needed(self):
+        self.assertFalse(in_text(zone(), "шорт от 84000"))
+
+    def test_chart_reading_near_a_written_number_is_not_text(self):
+        self.assertFalse(in_text(zone(), "смотрим 81500 и 84900"))
+
+    def test_zone_without_bounds_is_not_in_text(self):
+        self.assertFalse(in_text(zone(action="cancel", zone_low=None, zone_high=None), "82000 84000"))
 
 
 class ZoneTest(unittest.TestCase):

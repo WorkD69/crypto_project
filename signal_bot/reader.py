@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
-from telethon.tl.types import PeerChannel
+from telethon.tl.types import MessageMediaPhoto, PeerChannel
 
 from signal_bot.service import Incoming
 
@@ -35,9 +35,16 @@ def post_url(chat_id: int, username: str | None, message_id: int) -> str:
     return f"https://t.me/{username}/{message_id}" if username else f"https://t.me/c/{plain_id(chat_id)}/{message_id}"
 
 
+def has_photo(message) -> bool:
+    """Not message.photo: Telethon also returns the preview picture of a link there."""
+    return isinstance(message.media, MessageMediaPhoto)
+
+
 def post_from(source: Source, message) -> Incoming:
-    return Incoming(source.name, origin_key(source.id, message.id), post_url(source.id, source.username, message.id),
-                    message.message or "")
+    key = origin_key(source.id, message.id)
+    album = f"{source.id}:{message.grouped_id}" if message.grouped_id else None
+    return Incoming(source.name, key, post_url(source.id, source.username, message.id), message.message or "",
+                    message.date, key, message.id, album)
 
 
 async def catch_up(client, source: Source, cursor: int | None, handle) -> int | None:
