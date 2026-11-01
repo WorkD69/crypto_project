@@ -17,6 +17,7 @@ MAX_TEXT = 6000
 MAX_EVIDENCE = 300
 ACTIONS = {"new", "update", "cancel", "result"}
 SIDES = {"LONG", "SHORT"}
+TRIGGERS = {"zone", "break"}
 QUOTE_RE = re.compile(r"(USDT|USDC|USD)$")
 CONTRACT_RE = re.compile(r"\.P$|\.PERP$|PERP$|[\s/_-]")
 BASE_NAMES = {"GOLD": "XAU", "SILVER": "XAG", "GOOGLE": "GOOGL"}
@@ -27,11 +28,19 @@ INSTRUCTIONS = """Ты разбираешь пост трейдера и най�
 Ничего не считай и не придумывай: записывай только то, что автор показал или написал сам.
 Верни только один JSON-объект, без пояснений и без Markdown:
 {"relevant": true, "zones": [{"symbol": "BTCUSDT", "side": "LONG", "zone_low": 80000, "zone_high": 81000,
-"stop": 78000, "targets": [84000], "timeframe": "4H", "action": "new", "confidence": 0.8,
+"stop": 78000, "targets": [84000], "timeframe": "4H", "action": "new", "trigger": "zone", "confidence": 0.8,
 "evidence": "что именно показывает зону", "chart_price": 80500}]}
 
 Правила:
-- relevant=false и пустой zones, если автор не намечает зону: мем, реклама, новость, обучение без монеты.
+- Многие посты вообще не про торговлю, это нормально. relevant=false и пустой zones, если автор не показывает идею:
+  мем, реклама, новость, календарь, личный пост, журнал сделок, обучение без монеты.
+- Идею показывает не только рамка. Нарисованная кистью или ручкой траектория, стрелки и линии тоже показывают замысел автора.
+- Нарисованная траектория: цена постоит в диапазоне, а потом пойдёт к цели, например снимать ликвидность.
+  zone_low и zone_high это размах колебаний траектории в этом диапазоне, side это итоговое движение, конец траектории это цель в targets.
+- Условный уровень: линия, при потере или пробое которой автор ждёт сильное движение. Это не вход от текущей цены.
+  zone_low и zone_high равны этому уровню, side это движение после пробоя, trigger="break", цель в targets.
+- Цель может быть показана как снятие прошлого минимума или максимума: запиши его уровень в targets.
+- trigger="zone" для обычного входа от зоны или диапазона.
 - Одна запись на одну зону. На графике и в тексте их может быть несколько, в том числе по разным монетам.
 - symbol: биржевой тикер как на графике или в тексте, а не название компании: GOOGL, а не GOOGLE.
 - side: LONG или SHORT, по замыслу автора. Если направление не определить, зону не записывай.
@@ -63,6 +72,7 @@ class Zone:
     evidence: str
     chart_price: float | None
     flags: tuple[str, ...] = ()
+    trigger: str = "zone"
 
 
 @dataclass(frozen=True)
@@ -104,10 +114,10 @@ def _zone(raw) -> Zone:
         raise BadAnswer("SCHEMA_ZONE")
     symbol, side, action = raw.get("symbol"), raw.get("side"), raw.get("action")
     confidence, evidence, targets = raw.get("confidence"), raw.get("evidence"), raw.get("targets", [])
-    timeframe = raw.get("timeframe")
+    timeframe, trigger = raw.get("timeframe"), raw.get("trigger", "zone")
     low, high = _price(raw.get("zone_low")), _price(raw.get("zone_high"))
     plain_action = action in {"new", "update"}
-    if not isinstance(symbol, str) or not symbol.strip() or action not in ACTIONS:
+    if not isinstance(symbol, str) or not symbol.strip() or action not in ACTIONS or trigger not in TRIGGERS:
         raise BadAnswer("SCHEMA_ZONE")
     if side not in SIDES and (plain_action or side is not None):
         raise BadAnswer("SCHEMA_SIDE")
@@ -122,7 +132,8 @@ def _zone(raw) -> Zone:
     if low is not None:
         low, high = min(low, high), max(low, high)
     return Zone(symbol.strip(), side, low, high, _price(raw.get("stop")), tuple(_target(item) for item in targets),
-                timeframe, action, float(confidence), evidence.strip()[:MAX_EVIDENCE], _price(raw.get("chart_price")))
+                timeframe, action, float(confidence), evidence.strip()[:MAX_EVIDENCE], _price(raw.get("chart_price")),
+                trigger=trigger)
 
 
 def parse_answer(answer: dict) -> Extraction:
@@ -132,21 +143,22 @@ def parse_answer(answer: dict) -> Extraction:
     return Extraction(relevant or bool(zones), tuple(_zone(raw) for raw in zones))
 
 
-def _thousands_misread(zone: Zone, price: float) -> bool:
-    """A decimal comma read as a thousands separator: the screenshot price proves it exactly."""
-    return (zone.chart_price is not None and
-            abs(zone.chart_price / MISREAD_THOUSANDS - price) / price <= MAX_CHART_DRIFT)
+def _near(level: float, price: float) -> bool:
+    return max(level / price, price / level) <= MAX_PRICE_RATIO
 
 
-def _scaled_back(zone: Zone) -> Zone:
-    scale = lambda value: None if value is None else round(value / MISREAD_THOUSANDS, 9)
+def _scaled_back(zone: Zone, price: float) -> Zone:
+    """A decimal comma read as a thousands separator: only the market price can prove it."""
+    misread = lambda value: value is not None and not _near(value, price) and _near(value / MISREAD_THOUSANDS, price)
+
+    def scale(value: float | None) -> float | None:
+        return round(value / MISREAD_THOUSANDS, 9) if misread(value) else value
+
+    if not any(misread(level) for level in (zone.zone_low, zone.zone_high, zone.stop, zone.chart_price, *zone.targets)):
+        return zone
     return replace(zone, zone_low=scale(zone.zone_low), zone_high=scale(zone.zone_high), stop=scale(zone.stop),
                    targets=tuple(scale(target) for target in zone.targets), chart_price=scale(zone.chart_price),
                    flags=("SCALE_FIXED",))
-
-
-def _near(level: float, price: float) -> bool:
-    return max(level / price, price / level) <= MAX_PRICE_RATIO
 
 
 async def verify_zone(zone: Zone, symbols: set[str], price_at, posted_at: datetime) -> Zone:
@@ -157,8 +169,7 @@ async def verify_zone(zone: Zone, symbols: set[str], price_at, posted_at: dateti
         price = await price_at(symbol, posted_at)
     except MarketError:
         return replace(zone, symbol=symbol, flags=("PRICE_UNAVAILABLE",))
-    if _thousands_misread(zone, price):
-        zone = _scaled_back(zone)
+    zone = _scaled_back(zone, price)
     flags = list(zone.flags)
     if zone.chart_price is not None and abs(zone.chart_price - price) / price > MAX_CHART_DRIFT:
         flags += ["CHART_PRICE_DRIFT", CHECK_BY_EYE]

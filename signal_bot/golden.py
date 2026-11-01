@@ -85,6 +85,11 @@ def group_album(messages: list) -> list[list]:
     return sorted(posts, key=lambda parts: parts[0].id, reverse=True)
 
 
+def set_files(folder: Path, name: str) -> tuple[Path, Path]:
+    suffix = f"-{name}" if name else ""
+    return folder / f"labels{suffix}.json", folder / f"results{suffix}.json"
+
+
 def read_json(path: Path, default):
     return json.loads(path.read_text(encoding="utf-8")) if path.exists() else default
 
@@ -130,10 +135,11 @@ async def collect(folder: Path, config: Path, per_source: int, days: int) -> Non
     print("posts", len(posts))
 
 
-async def run(folder: Path) -> None:
+async def run(folder: Path, name: str) -> None:
+    labels_path, results_path = set_files(folder, name)
     posts = {post["key"]: post for post in read_json(folder / "posts.json", [])}
-    labels = read_json(folder / "labels.json", {})
-    results = read_json(folder / "results.json", {})
+    labels = read_json(labels_path, {})
+    results = read_json(results_path, {})
     client, market = BrokerClient(), BybitClient()
     symbols = await market.symbols()
     for key in labels:
@@ -156,17 +162,19 @@ async def run(folder: Path) -> None:
         finally:
             for sha in spooled:
                 (SPOOL / f"{sha}.jpg").unlink(missing_ok=True)
-        write_json(folder / "results.json", results)
+        write_json(results_path, results)
 
 
 def _short(zone: dict) -> str:
     low, high = zone.get("zone_low", zone.get("low")), zone.get("zone_high", zone.get("high"))
     flags = ",".join(zone.get("flags", []))
-    return f"{zone['symbol']} {zone['side']} {low}-{high} {flags}".strip()
+    trigger = "при пробое" if zone.get("trigger") == "break" else ""
+    return f"{zone['symbol']} {zone['side']} {low}-{high} {trigger} {flags}".strip()
 
 
-def show_score(folder: Path) -> None:
-    labels, results = read_json(folder / "labels.json", {}), read_json(folder / "results.json", {})
+def show_score(folder: Path, name: str) -> None:
+    labels_path, results_path = set_files(folder, name)
+    labels, results = read_json(labels_path, {}), read_json(results_path, {})
     done = {key: results[key] for key in labels if "zones" in results.get(key, {})}
     cases = [{"labels": labels[key]["zones"], "predicted": done[key]["zones"]} for key in done]
     sure = [case for case, key in zip(cases, done) if labels[key].get("sure")]
@@ -189,6 +197,7 @@ def main() -> None:
     parser.add_argument("command", choices=["collect", "run", "score"])
     parser.add_argument("--per-source", type=int, default=12)
     parser.add_argument("--days", type=int, default=60)
+    parser.add_argument("--set", dest="name", default="")
     args = parser.parse_args()
     data = Path(os.environ.get("BOT_DATA_DIR", "/var/lib/crypto-signals"))
     folder = data / "golden"
@@ -197,9 +206,9 @@ def main() -> None:
         config = Path(os.environ.get("BOT_CONFIG_DIR", "/etc/crypto-signals"))
         asyncio.run(collect(folder, config, args.per_source, args.days))
     elif args.command == "run":
-        asyncio.run(run(folder))
+        asyncio.run(run(folder, args.name))
     else:
-        show_score(folder)
+        show_score(folder, args.name)
 
 
 if __name__ == "__main__":

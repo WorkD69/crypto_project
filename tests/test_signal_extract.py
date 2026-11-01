@@ -63,6 +63,13 @@ class SchemaTest(unittest.TestCase):
         self.assertIsNone(result.stop)
         self.assertEqual(result.targets, ())
 
+    def test_plain_zone_is_entered_on_touch_by_default(self):
+        self.assertEqual(zone().trigger, "zone")
+
+    def test_level_that_works_when_lost(self):
+        result = zone(trigger="break", zone_low=140, zone_high=140, targets=[100])
+        self.assertEqual(result.trigger, "break")
+
     def test_cancel_needs_no_levels(self):
         result = zone(action="cancel", zone_low=None, zone_high=None, side=None)
         self.assertIsNone(result.zone_low)
@@ -71,6 +78,7 @@ class SchemaTest(unittest.TestCase):
         bad = [{"zones": []}, {"relevant": True}, {"relevant": "yes", "zones": []},
                {"relevant": True, "zones": [raw_zone(side="UP")]},
                {"relevant": True, "zones": [raw_zone(action="buy")]},
+               {"relevant": True, "zones": [raw_zone(trigger="maybe")]},
                {"relevant": True, "zones": [raw_zone(zone_low="82k")]},
                {"relevant": True, "zones": [raw_zone(zone_low=None)]},
                {"relevant": True, "zones": [raw_zone(zone_low=True)]},
@@ -101,6 +109,11 @@ class PromptTest(unittest.TestCase):
 
     def test_drawn_price_path_is_not_excluded(self):
         self.assertNotIn("Нарисованный путь", build_prompt("пост"))
+
+    def test_owner_chart_rules_are_taught(self):
+        prompt = build_prompt("пост")
+        for piece in ("траектория", '"trigger"', "при потере", "снятие прошлого минимума"):
+            self.assertIn(piece, prompt)
 
     def test_decimal_comma_is_explained(self):
         self.assertIn("4,316 это 4.316", build_prompt("пост"))
@@ -168,6 +181,11 @@ class VerifyTest(unittest.TestCase):
         self.assertEqual((result.zone_low, result.zone_high, result.stop), (4.41, 4.44, 4.6))
         self.assertEqual(result.targets, (3.9,))
         self.assertEqual(result.chart_price, 4.316)
+        self.assertEqual(result.flags, ("SCALE_FIXED",))
+
+    def test_levels_alone_can_be_misread_while_chart_price_is_right(self):
+        result = self.verify(zone(zone_low=8040, zone_high=8500, stop=None, targets=[], chart_price=6.976), price=6.98)
+        self.assertEqual((result.zone_low, result.zone_high, result.chart_price), (8.04, 8.5, 6.976))
         self.assertEqual(result.flags, ("SCALE_FIXED",))
 
     def test_far_chart_price_is_not_scaled_without_the_exact_ratio(self):

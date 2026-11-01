@@ -2,7 +2,9 @@ import unittest
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from signal_bot.golden import group_album, score, zone_matches
+from pathlib import Path
+
+from signal_bot.golden import group_album, score, set_files, zone_matches
 
 
 def label(symbol="BTCUSDT", side="SHORT", low=82000, high=84000):
@@ -90,6 +92,14 @@ class ScoreTest(unittest.TestCase):
 
     def test_no_labels_never_pass(self):
         self.assertFalse(self.report(([], []))["passed"])
+
+
+class SetFilesTest(unittest.TestCase):
+    def test_default_set(self):
+        self.assertEqual(set_files(Path("g"), ""), (Path("g/labels.json"), Path("g/results.json")))
+
+    def test_named_set_keeps_its_own_files(self):
+        self.assertEqual(set_files(Path("g"), "fresh"), (Path("g/labels-fresh.json"), Path("g/results-fresh.json")))
 
 
 @dataclass
