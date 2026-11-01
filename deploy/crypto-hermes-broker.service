@@ -1,0 +1,34 @@
+[Unit]
+Description=Narrow gateway from the signal bot to Hermes
+After=docker.service
+Wants=docker.service
+
+[Service]
+Type=simple
+User=crypto-hermes
+Group=cryptosignals
+SupplementaryGroups=docker
+WorkingDirectory=/opt/crypto-signals
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONUTF8=1
+Environment=HOME=/var/lib/crypto-hermes-broker
+ExecStart=/opt/crypto-signals/.venv/bin/python -m signal_bot.broker
+Restart=on-failure
+RestartSec=15
+RuntimeDirectory=crypto-hermes
+RuntimeDirectoryMode=0750
+StateDirectory=crypto-hermes-broker
+StateDirectoryMode=0700
+UMask=0007
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+RestrictAddressFamilies=AF_UNIX
+IPAddressDeny=any
+MemoryMax=128M
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

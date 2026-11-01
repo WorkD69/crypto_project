@@ -20,6 +20,10 @@ chown -R root:root signal_bot.new
 rm -rf signal_bot.prev
 mv signal_bot signal_bot.prev
 mv signal_bot.new signal_bot
+if systemctl cat crypto-hermes-broker >/dev/null 2>&1; then
+    systemctl restart crypto-hermes-broker
+    systemctl is-active crypto-hermes-broker
+fi
 systemctl restart crypto-signals
 sleep 10
 systemctl is-active crypto-signals
