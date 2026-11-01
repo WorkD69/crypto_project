@@ -19,6 +19,24 @@ def client(handler):
     return BybitClient(httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://test"))
 
 
+class PriceAtTest(unittest.TestCase):
+    def test_close_of_the_minute_of_the_moment(self):
+        minute = 60_000
+
+        def handler(request):
+            self.assertEqual(request.url.params["interval"], "1")
+            return ok({"list": [[str(MS + minute), "9", "9", "9", "9", "1", "1"],
+                                [str(MS), "1", "3", "1", "2", "1", "1"],
+                                [str(MS - minute), "4", "4", "4", "4", "1", "1"]]})
+
+        moment = T0 + timedelta(seconds=20)
+        self.assertEqual(asyncio.run(client(handler).price_at("BTCUSDT", moment)), 2.0)
+
+    def test_no_bars_is_a_market_error(self):
+        with self.assertRaises(MarketError):
+            asyncio.run(client(lambda request: ok({"list": []})).price_at("BTCUSDT", T0))
+
+
 class ClosedBarsTest(unittest.TestCase):
     def rows(self):
         return [[str(MS + STEP), "4", "5", "3", "4", "1", "1"],

@@ -52,6 +52,16 @@ class BybitClient:
         result = await self._get("tickers", category="linear", symbol=symbol)
         return float(result["list"][0]["lastPrice"])
 
+    async def price_at(self, symbol: str, moment: datetime) -> float:
+        """Close of the one-minute candle holding the moment, to compare with a chart screenshot."""
+        end = int(moment.timestamp() * 1000)
+        result = await self._get("kline", category="linear", symbol=symbol, interval="1",
+                                 start=end - 120_000, end=end, limit=3)
+        rows = [row for row in result["list"] if int(row[0]) <= end]
+        if not rows:
+            raise MarketError("no candles")
+        return float(max(rows, key=lambda row: int(row[0]))[4])
+
     async def bars(self, symbol: str, start: datetime, now: datetime) -> list[Bar]:
         begin = int(start.timestamp() * 1000)
         end = begin + (MAX_BARS - 1) * int(INTERVAL.total_seconds() * 1000)
