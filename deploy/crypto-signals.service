@@ -1,0 +1,30 @@
+[Unit]
+Description=Crypto signals Telegram bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=cryptosignals
+Group=cryptosignals
+WorkingDirectory=/opt/crypto-signals
+EnvironmentFile=/etc/crypto-signals/secrets.env
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONUTF8=1
+ExecStart=/opt/crypto-signals/.venv/bin/python -m signal_bot
+Restart=on-failure
+RestartSec=15
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/crypto-signals
+MemoryMax=300M
+StandardOutput=journal
+StandardError=journal
+LogRateLimitIntervalSec=30s
+LogRateLimitBurst=200
+
+[Install]
+WantedBy=multi-user.target
